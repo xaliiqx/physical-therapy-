@@ -169,19 +169,6 @@
   .badge-inactive{background:rgba(248,113,113,.15); color:var(--bad);}
   .badge-pending{background:rgba(255,194,71,.15); color:var(--primary-2);}
 
-  .exam-card{
-    background: linear-gradient(160deg, var(--card), var(--card-2));
-    border:1px solid var(--line); border-radius:14px; padding:18px; margin-bottom:14px;
-  }
-  .exam-card-head{display:flex; justify-content:space-between; align-items:flex-start; gap:10px; flex-wrap:wrap;}
-  .exam-card-head h3{margin:0; font-size:1.05rem; font-family:'Cairo'; font-weight:800;}
-  .exam-meta-grid{display:grid; grid-template-columns:1fr 1fr; gap:10px; margin:14px 0;}
-  @media(min-width:560px){ .exam-meta-grid{grid-template-columns:repeat(4,1fr);} }
-  .exam-meta-grid .meta-item{background:rgba(0,0,0,.18); border-radius:8px; padding:9px 10px; overflow:hidden;}
-  .exam-meta-grid .meta-label{display:block; font-size:.66rem; color:var(--text-dim); margin-bottom:4px;}
-  .exam-meta-grid .meta-value{font-size:.82rem; font-weight:700; word-break:break-word;}
-  .exam-actions{display:flex; gap:16px; margin-top:10px; flex-wrap:wrap; border-top:1px solid var(--line); padding-top:12px;}
-
   .qcard{
     background: rgba(0,0,0,.18); border:1px solid var(--line); border-radius:12px; padding:16px; margin-bottom:14px;
     position:relative;
@@ -329,47 +316,7 @@
   <div class="loading"><div class="spinner"></div>جارٍ التحميل...</div>
 </div>
 
-<!-- ============================= FIREBASE SETUP ============================= -->
-<!-- استبدل القيم أدناه بإعدادات مشروعك من: Firebase Console → Project settings → عام → "تطبيقاتك" (Web app) -->
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
-<script>
-  const firebaseConfig = {
-    apiKey: "AIzaSyBQv_C5K1tb26nIRSgIi9kHA9LdUOt2AVA",
-    authDomain: "physical-964de.firebaseapp.com",
-    projectId: "physical-964de",
-    storageBucket: "physical-964de.firebasestorage.app",
-    messagingSenderId: "646270551797",
-    appId: "1:646270551797:web:bc82728147d3d17757e7bc"
-  };
-  firebase.initializeApp(firebaseConfig);
-  const db = firebase.firestore();
-  const FS_COLLECTION = 'examAppData';
-
-  // يحاكي هذا الكائن نفس واجهة window.storage الأصلية، لذا لا حاجة لتغيير أي شيء آخر بالتطبيق.
-  window.storage = {
-    async get(key, shared){
-      const snap = await db.collection(FS_COLLECTION).doc(key).get();
-      if(!snap.exists) throw new Error('key-not-found: ' + key);
-      return { key, value: snap.data().value, shared: !!shared };
-    },
-    async set(key, value, shared){
-      await db.collection(FS_COLLECTION).doc(key).set({ value, updatedAt: Date.now() });
-      return { key, value, shared: !!shared };
-    },
-    async delete(key, shared){
-      await db.collection(FS_COLLECTION).doc(key).delete();
-      return { key, deleted: true, shared: !!shared };
-    },
-    async list(prefix, shared){
-      const snaps = await db.collection(FS_COLLECTION).get();
-      const keys = [];
-      snaps.forEach(d => { if(!prefix || d.id.startsWith(prefix)) keys.push(d.id); });
-      return { keys, prefix, shared: !!shared };
-    }
-  };
-</script>
-
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script>
 /* ============================= STORAGE HELPERS ============================= */
 async function loadExams(){
@@ -422,13 +369,12 @@ async function loadStudents(){
 async function saveStudents(list){ await window.storage.set('students-list', JSON.stringify(list), true); }
 async function checkStorageHealth(){
   try{
-    if(!window.storage) return { ok:false, error:'window.storage غير معرّف' };
+    if(!window.storage) return false;
     const testVal = 'ok-' + Date.now();
     await window.storage.set('healthcheck', testVal, false);
     const r = await window.storage.get('healthcheck', false);
-    if(r && r.value === testVal) return { ok:true, error:null };
-    return { ok:false, error:'تم الاتصال لكن التحقق من القراءة فشل' };
-  }catch(e){ return { ok:false, error: (e && e.message) ? e.message : String(e) }; }
+    return !!(r && r.value === testVal);
+  }catch(e){ return false; }
 }
 
 const DEFAULT_THEME = { bg:'#120f2b', bg2:'#1c1750', card:'#211c4d', primary:'#ff6f5e', primary2:'#ffc247', text:'#f5f3ff' };
@@ -846,8 +792,7 @@ async function saveDraftExam(event){
     if(saveBtn) saveBtn.disabled = false;
     setTimeout(()=>{ adminTab='list'; renderAdminTabContent(); }, 2600);
   }catch(err){
-    const detail = (err && err.message) ? err.message : String(err);
-    msgEl.innerHTML = `<div class="msg msg-error">تعذّر حفظ الامتحان.<div style="font-weight:400; font-size:.72rem; margin-top:6px; direction:ltr; word-break:break-word;">${detail.replace(/</g,'&lt;')}</div></div>`;
+    msgEl.innerHTML = `<div class="msg msg-error">تعذّر حفظ الامتحان بسبب مشكلة في الاتصال بالتخزين. تأكد من اتصالك بالإنترنت وأعد المحاولة، ولا تغلق الصفحة حتى تظهر رسالة "تم الحفظ بنجاح".</div>`;
     if(saveBtn) saveBtn.disabled = false;
   }
   msgEl.scrollIntoView({behavior:'smooth', block:'center'});
@@ -862,39 +807,40 @@ async function renderExamListTab(el){
     return;
   }
   el.innerHTML = `
-    <h3 class="display" style="margin-bottom:14px;">جميع الامتحانات</h3>
-    ${exams.map(ex => {
-      const usable = isExamUsable(ex);
-      const revealed = !!revealedCodes[ex.code];
-      const statusLabel = usable.ok ? 'مفعّل' : (ex.active ? 'منتهي الصلاحية' : 'موقوف');
-      return `
-      <div class="exam-card">
-        <div class="exam-card-head">
-          <h3>${escapeHtml(ex.title)}</h3>
-          <span class="badge ${usable.ok?'badge-active':'badge-inactive'}">${statusLabel}</span>
-        </div>
-        <div class="exam-meta-grid">
-          <div class="meta-item" style="grid-column: span 2;">
-            <span class="meta-label">الرمز</span>
-            <span class="code-chip" style="font-size:.8rem; padding:5px 10px;">
-              ${revealed ? ex.code : '••••••'}
-              <button class="icon-btn" onclick="toggleReveal('${ex.code}')" title="${revealed?'إخفاء':'إظهار'}">${revealed?'🙈':'👁️'}</button>
-              <button class="icon-btn" onclick="copyCode('${ex.code}')" title="نسخ">📋</button>
-            </span>
-          </div>
-          <div class="meta-item"><span class="meta-label">الأسئلة</span><span class="meta-value">${ex.questions.length}</span></div>
-          <div class="meta-item"><span class="meta-label">المدة</span><span class="meta-value">${ex.duration} د</span></div>
-          <div class="meta-item" style="grid-column: span 2;">
-            <span class="meta-label">انتهاء صلاحية الرمز</span>
-            <span class="meta-value">${ex.expiresAt ? new Date(ex.expiresAt).toLocaleString('ar-EG') : 'بدون تاريخ انتهاء'}</span>
-          </div>
-        </div>
-        <div class="exam-actions">
-          <button class="link-btn" onclick="toggleExamActive('${ex.code}')">${ex.active?'⏸ إيقاف':'▶ تفعيل'}</button>
-          <button class="link-btn" onclick="deleteExam('${ex.code}')" style="color:var(--bad);">🗑 حذف</button>
-        </div>
-      </div>
-    `;}).join('')}
+    <div class="panel">
+      <h3 class="display">جميع الامتحانات</h3>
+      <table>
+        <thead><tr><th>العنوان</th><th>الرمز</th><th>الأسئلة</th><th>المدة</th><th>الصلاحية</th><th>الحالة</th><th>إجراءات</th></tr></thead>
+        <tbody>
+          ${exams.map(ex => {
+            const usable = isExamUsable(ex);
+            const revealed = !!revealedCodes[ex.code];
+            return `
+            <tr>
+              <td>${escapeHtml(ex.title)}</td>
+              <td>
+                <span class="code-chip" style="font-size:.8rem; padding:5px 10px;">
+                  ${revealed ? ex.code : '••••••'}
+                  <button class="icon-btn" onclick="toggleReveal('${ex.code}')" title="${revealed?'إخفاء':'إظهار'}">${revealed?'🙈':'👁️'}</button>
+                  <button class="icon-btn" onclick="copyCode('${ex.code}')" title="نسخ">📋</button>
+                </span>
+              </td>
+              <td>${ex.questions.length}</td>
+              <td>${ex.duration} د</td>
+              <td>${ex.expiresAt ? new Date(ex.expiresAt).toLocaleString('ar-EG') : '—'}</td>
+              <td>
+                <span class="badge ${usable.ok?'badge-active':'badge-inactive'}">${usable.ok?'مفعّل':(ex.active?'منتهي الصلاحية':'موقوف')}</span>
+              </td>
+              <td>
+                <button class="link-btn" onclick="toggleExamActive('${ex.code}')">${ex.active?'إيقاف':'تفعيل'}</button>
+                &nbsp;·&nbsp;
+                <button class="link-btn" onclick="deleteExam('${ex.code}')" style="color:var(--bad);">حذف</button>
+              </td>
+            </tr>
+          `;}).join('')}
+        </tbody>
+      </table>
+    </div>
   `;
 }
 function toggleReveal(code){ revealedCodes[code] = !revealedCodes[code]; renderExamListTab(document.getElementById('adminTabContent')); }
@@ -939,6 +885,7 @@ async function renderStudentsTab(el){
     <div class="q-list-add" onclick="addStudentRow()">+ إضافة طالب واحد</div>
     <button class="btn btn-primary" onclick="saveStudentsList()">حفظ قائمة الطلاب</button>
     <div id="studentsMsg"></div>
+    <div id="studentsExcelSection" style="margin-top:20px;"></div>
   `;
   renderStudentsList();
 }
@@ -963,6 +910,7 @@ function renderStudentsList(){
   if(!el) return;
   if(draftStudents.length===0){
     el.innerHTML = `<div class="panel"><div class="empty"><div class="icon">🧑‍🎓</div>لا يوجد طلاب مضافون بعد.</div></div>`;
+    renderStudentsExcelTable();
     return;
   }
   el.innerHTML = draftStudents.map((s, idx) => {
@@ -1016,9 +964,9 @@ function renderStudentsList(){
     </div>
   `;}).join('');
   draftStudents.forEach(s => {
-    document.getElementById(`sname_${s.id}`).addEventListener('input', e=>{ s.name = e.target.value; });
-    document.getElementById(`sclass_${s.id}`).addEventListener('change', e=>{ s.class = e.target.value; });
-    document.getElementById(`ssection_${s.id}`).addEventListener('input', e=>{ s.section = e.target.value; });
+    document.getElementById(`sname_${s.id}`).addEventListener('input', e=>{ s.name = e.target.value; renderStudentsExcelTable(); });
+    document.getElementById(`sclass_${s.id}`).addEventListener('change', e=>{ s.class = e.target.value; renderStudentsExcelTable(); });
+    document.getElementById(`ssection_${s.id}`).addEventListener('input', e=>{ s.section = e.target.value; renderStudentsExcelTable(); });
     document.getElementById(`sphone_${s.id}`).addEventListener('input', e=>{ s.parentPhone = e.target.value; });
     const photoInp = document.getElementById(`sphoto_${s.id}`);
     if(photoInp) photoInp.addEventListener('change', async e=>{
@@ -1031,11 +979,77 @@ function renderStudentsList(){
       renderStudentsList();
     });
   });
+  renderStudentsExcelTable();
 }
 function clearStudentPhoto(studentId){
   const s = draftStudents.find(x=>x.id===studentId);
   if(s) s.photo = '';
   renderStudentsList();
+}
+function groupStudentsByClassOrdered(){
+  const groups = {};
+  draftStudents.forEach(s=>{
+    const cls = (s.class && s.class.trim()) ? s.class.trim() : 'بدون صف';
+    if(!groups[cls]) groups[cls] = [];
+    groups[cls].push(s);
+  });
+  const known = GRADE_KEYS.map(gk=>GRADE_LABELS[gk]);
+  const names = Object.keys(groups);
+  const ordered = [...known.filter(n=>names.includes(n)), ...names.filter(n=>!known.includes(n))];
+  return { groups, ordered };
+}
+function renderStudentsExcelTable(){
+  const el = document.getElementById('studentsExcelSection');
+  if(!el) return;
+  const { groups, ordered } = groupStudentsByClassOrdered();
+  if(ordered.length===0){
+    el.innerHTML = `<div class="panel"><div class="empty"><div class="icon">📊</div>جدول Excel سيظهر هنا تلقائيًا بمجرد إضافة طلاب.</div></div>`;
+    return;
+  }
+  el.innerHTML = `
+    <div class="panel">
+      <h3 class="display">📊 جدول بيانات الطلاب (Excel) — ورقة مستقلة لكل صف</h3>
+      <p style="font-size:.78rem; color:var(--text-dim);">يتحدّث هذا الجدول تلقائيًا مع كل طالب تضيفه أو تعدّله، ويحتوي كل صف على: الاسم، الصف، الشعبة. اضغط الزر أدناه لتنزيله كملف Excel حقيقي (xlsx) بحيث تكون كل ورقة داخل الملف لصفٍ دراسي مستقل.</p>
+      ${ordered.map(cls => `
+        <div style="margin-top:14px;">
+          <p style="font-weight:700; color:var(--primary-2); margin-bottom:6px;">🏫 ${escapeHtml(cls)} (${groups[cls].length} طالب)</p>
+          <table>
+            <thead><tr><th>الاسم</th><th>الصف</th><th>الشعبة</th></tr></thead>
+            <tbody>
+              ${groups[cls].map(s=>`<tr><td>${escapeHtml(s.name||'—')}</td><td>${escapeHtml(s.class||'—')}</td><td>${escapeHtml(s.section||'—')}</td></tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+      `).join('')}
+      <button class="btn btn-primary" style="margin-top:14px;" onclick="downloadStudentsExcel()">⬇️ تنزيل ملف Excel (xlsx)</button>
+      <div id="studentsExcelMsg" style="margin-top:8px;"></div>
+    </div>
+  `;
+}
+function downloadStudentsExcel(){
+  const msgEl = document.getElementById('studentsExcelMsg');
+  if(typeof XLSX === 'undefined'){
+    if(msgEl) msgEl.innerHTML = `<div class="msg msg-error">تعذّر تحميل مكتبة Excel. تأكد من اتصالك بالإنترنت وأعد المحاولة.</div>`;
+    return;
+  }
+  if(!draftStudents || draftStudents.length===0){
+    if(msgEl) msgEl.innerHTML = `<div class="msg msg-error">لا يوجد طلاب لتصديرهم بعد.</div>`;
+    return;
+  }
+  const { groups, ordered } = groupStudentsByClassOrdered();
+  const wb = XLSX.utils.book_new();
+  ordered.forEach(cls=>{
+    const rows = [['الاسم','الصف','الشعبة']];
+    groups[cls].forEach(s=> rows.push([s.name||'', s.class||'', s.section||'']));
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    ws['!cols'] = [{wch:24},{wch:18},{wch:10}];
+    let sheetName = cls.replace(/[\[\]\*\/\\\?:]/g,'').slice(0,31) || 'صف';
+    let base = sheetName, i=2;
+    while(wb.SheetNames.includes(sheetName)){ sheetName = (base + '_' + i).slice(0,28); i++; }
+    XLSX.utils.book_append_sheet(wb, ws, sheetName);
+  });
+  XLSX.writeFile(wb, `بيانات_الطلاب_${new Date().toISOString().slice(0,10)}.xlsx`);
+  if(msgEl) msgEl.innerHTML = `<div class="msg msg-success">تم تنزيل ملف Excel بنجاح (${wb.SheetNames.length} ورقة/صف).</div>`;
 }
 async function getStudentExamResults(s){
   const subs = await loadSubs();
@@ -1929,12 +1943,11 @@ function toggleMgDetail(i){
 
 /* ============================= INIT ============================= */
 (async function init(){
-  const health = await checkStorageHealth();
-  if(!health.ok){
+  const healthy = await checkStorageHealth();
+  if(!healthy){
     document.body.insertAdjacentHTML('afterbegin', `
       <div style="background:#a13d3d; color:#fff; text-align:center; padding:10px 16px; font-size:.8rem; font-weight:700; position:relative; z-index:100;">
-        ⚠️ تعذّر الاتصال بقاعدة بيانات Firebase.
-        <div style="font-weight:400; font-size:.72rem; margin-top:4px; direction:ltr; word-break:break-word;">${(health.error||'').replace(/</g,'&lt;')}</div>
+        ⚠️ تعذّر الوصول إلى نظام الحفظ الدائم في هذه الجلسة. إذا كنت قد نزّلت هذا الملف وفتحته مباشرة في المتصفح (وليس من داخل محادثة Claude أو رابط النشر)، فلن تُحفظ أي بيانات — الامتحانات والنتائج تحتاج لفتح الملف من داخل بيئة Claude (كمصنع/Artifact) ليعمل الحفظ بشكل صحيح.
       </div>
     `);
   }
