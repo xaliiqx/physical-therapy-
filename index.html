@@ -169,6 +169,19 @@
   .badge-inactive{background:rgba(248,113,113,.15); color:var(--bad);}
   .badge-pending{background:rgba(255,194,71,.15); color:var(--primary-2);}
 
+  .exam-card{
+    background: linear-gradient(160deg, var(--card), var(--card-2));
+    border:1px solid var(--line); border-radius:14px; padding:18px; margin-bottom:14px;
+  }
+  .exam-card-head{display:flex; justify-content:space-between; align-items:flex-start; gap:10px; flex-wrap:wrap;}
+  .exam-card-head h3{margin:0; font-size:1.05rem; font-family:'Cairo'; font-weight:800;}
+  .exam-meta-grid{display:grid; grid-template-columns:1fr 1fr; gap:10px; margin:14px 0;}
+  @media(min-width:560px){ .exam-meta-grid{grid-template-columns:repeat(4,1fr);} }
+  .exam-meta-grid .meta-item{background:rgba(0,0,0,.18); border-radius:8px; padding:9px 10px; overflow:hidden;}
+  .exam-meta-grid .meta-label{display:block; font-size:.66rem; color:var(--text-dim); margin-bottom:4px;}
+  .exam-meta-grid .meta-value{font-size:.82rem; font-weight:700; word-break:break-word;}
+  .exam-actions{display:flex; gap:16px; margin-top:10px; flex-wrap:wrap; border-top:1px solid var(--line); padding-top:12px;}
+
   .qcard{
     background: rgba(0,0,0,.18); border:1px solid var(--line); border-radius:12px; padding:16px; margin-bottom:14px;
     position:relative;
@@ -316,7 +329,62 @@
   <div class="loading"><div class="spinner"></div>جارٍ التحميل...</div>
 </div>
 
+<!-- ============================= EXCEL EXPORT LIBRARY ============================= -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+
+<!-- ============================= FIREBASE (backup storage backend) ============================= -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/12.15.0/firebase-app-compat.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/12.15.0/firebase-firestore-compat.min.js"></script>
+<script>
+  window.__storageBackend = 'native';
+  window.__firebaseError = null;
+  try{
+    if(typeof firebase === 'undefined'){
+      throw new Error('Firebase SDK لم يُحمَّل من الشبكة (typeof firebase === undefined)');
+    }
+    const firebaseConfig = {
+      apiKey: "AIzaSyBsXLpC1x3nw8UPA2QWVBKhhAnRKjV0RPc",
+      authDomain: "physical-1-fd535.firebaseapp.com",
+      projectId: "physical-1-fd535",
+      storageBucket: "physical-1-fd535.firebasestorage.app",
+      messagingSenderId: "1023621128960",
+      appId: "1:1023621128960:web:c71f53a48677b03ab649e5"
+    };
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.firestore();
+    db.settings({ experimentalAutoDetectLongPolling: true });
+    const FS_COLLECTION = 'examAppData';
+
+    // يحاكي هذا الكائن نفس واجهة window.storage الأصلية، لذا لا حاجة لتغيير أي شيء آخر بالتطبيق.
+    window.storage = {
+      async get(key, shared){
+        const snap = await db.collection(FS_COLLECTION).doc(key).get();
+        if(!snap.exists) throw new Error('key-not-found: ' + key);
+        return { key, value: snap.data().value, shared: !!shared };
+      },
+      async set(key, value, shared){
+        await db.collection(FS_COLLECTION).doc(key).set({ value, updatedAt: Date.now() });
+        return { key, value, shared: !!shared };
+      },
+      async delete(key, shared){
+        await db.collection(FS_COLLECTION).doc(key).delete();
+        return { key, deleted: true, shared: !!shared };
+      },
+      async list(prefix, shared){
+        const snaps = await db.collection(FS_COLLECTION).get();
+        const keys = [];
+        snaps.forEach(d => { if(!prefix || d.id.startsWith(prefix)) keys.push(d.id); });
+        return { keys, prefix, shared: !!shared };
+      }
+    };
+    window.__storageBackend = 'firebase';
+  }catch(err){
+    window.__firebaseError = (err && err.message) ? err.message : String(err);
+    // نتابع بدون إيقاف التنفيذ — window.storage الأصلي (إن وُجد من بيئة Claude) يبقى كما هو كنسخة احتياطية.
+  }
+</script>
+
+
 <script>
 /* ============================= STORAGE HELPERS ============================= */
 async function loadExams(){
@@ -368,13 +436,15 @@ async function loadStudents(){
 }
 async function saveStudents(list){ await window.storage.set('students-list', JSON.stringify(list), true); }
 async function checkStorageHealth(){
+  const backend = window.__storageBackend || 'native';
   try{
-    if(!window.storage) return false;
+    if(!window.storage) return { ok:false, error:'window.storage غير معرّف', backend };
     const testVal = 'ok-' + Date.now();
-    await window.storage.set('healthcheck', testVal, false);
-    const r = await window.storage.get('healthcheck', false);
-    return !!(r && r.value === testVal);
-  }catch(e){ return false; }
+    await window.storage.set('healthcheck', testVal, true);
+    const r = await window.storage.get('healthcheck', true);
+    if(r && r.value === testVal) return { ok:true, error:null, backend };
+    return { ok:false, error:'تم الاتصال لكن التحقق من القراءة (shared) فشل', backend };
+  }catch(e){ return { ok:false, error: 'shared-write-failed: ' + ((e && e.message) ? e.message : String(e)), backend }; }
 }
 
 const DEFAULT_THEME = { bg:'#120f2b', bg2:'#1c1750', card:'#211c4d', primary:'#ff6f5e', primary2:'#ffc247', text:'#f5f3ff' };
@@ -792,7 +862,8 @@ async function saveDraftExam(event){
     if(saveBtn) saveBtn.disabled = false;
     setTimeout(()=>{ adminTab='list'; renderAdminTabContent(); }, 2600);
   }catch(err){
-    msgEl.innerHTML = `<div class="msg msg-error">تعذّر حفظ الامتحان بسبب مشكلة في الاتصال بالتخزين. تأكد من اتصالك بالإنترنت وأعد المحاولة، ولا تغلق الصفحة حتى تظهر رسالة "تم الحفظ بنجاح".</div>`;
+    const detail = (err && err.message) ? err.message : String(err);
+    msgEl.innerHTML = `<div class="msg msg-error">تعذّر حفظ الامتحان.<div style="font-weight:400; font-size:.72rem; margin-top:6px; direction:ltr; word-break:break-word;">${detail.replace(/</g,'&lt;')}</div></div>`;
     if(saveBtn) saveBtn.disabled = false;
   }
   msgEl.scrollIntoView({behavior:'smooth', block:'center'});
@@ -807,40 +878,39 @@ async function renderExamListTab(el){
     return;
   }
   el.innerHTML = `
-    <div class="panel">
-      <h3 class="display">جميع الامتحانات</h3>
-      <table>
-        <thead><tr><th>العنوان</th><th>الرمز</th><th>الأسئلة</th><th>المدة</th><th>الصلاحية</th><th>الحالة</th><th>إجراءات</th></tr></thead>
-        <tbody>
-          ${exams.map(ex => {
-            const usable = isExamUsable(ex);
-            const revealed = !!revealedCodes[ex.code];
-            return `
-            <tr>
-              <td>${escapeHtml(ex.title)}</td>
-              <td>
-                <span class="code-chip" style="font-size:.8rem; padding:5px 10px;">
-                  ${revealed ? ex.code : '••••••'}
-                  <button class="icon-btn" onclick="toggleReveal('${ex.code}')" title="${revealed?'إخفاء':'إظهار'}">${revealed?'🙈':'👁️'}</button>
-                  <button class="icon-btn" onclick="copyCode('${ex.code}')" title="نسخ">📋</button>
-                </span>
-              </td>
-              <td>${ex.questions.length}</td>
-              <td>${ex.duration} د</td>
-              <td>${ex.expiresAt ? new Date(ex.expiresAt).toLocaleString('ar-EG') : '—'}</td>
-              <td>
-                <span class="badge ${usable.ok?'badge-active':'badge-inactive'}">${usable.ok?'مفعّل':(ex.active?'منتهي الصلاحية':'موقوف')}</span>
-              </td>
-              <td>
-                <button class="link-btn" onclick="toggleExamActive('${ex.code}')">${ex.active?'إيقاف':'تفعيل'}</button>
-                &nbsp;·&nbsp;
-                <button class="link-btn" onclick="deleteExam('${ex.code}')" style="color:var(--bad);">حذف</button>
-              </td>
-            </tr>
-          `;}).join('')}
-        </tbody>
-      </table>
-    </div>
+    <h3 class="display" style="margin-bottom:14px;">جميع الامتحانات</h3>
+    ${exams.map(ex => {
+      const usable = isExamUsable(ex);
+      const revealed = !!revealedCodes[ex.code];
+      const statusLabel = usable.ok ? 'مفعّل' : (ex.active ? 'منتهي الصلاحية' : 'موقوف');
+      return `
+      <div class="exam-card">
+        <div class="exam-card-head">
+          <h3>${escapeHtml(ex.title)}</h3>
+          <span class="badge ${usable.ok?'badge-active':'badge-inactive'}">${statusLabel}</span>
+        </div>
+        <div class="exam-meta-grid">
+          <div class="meta-item" style="grid-column: span 2;">
+            <span class="meta-label">الرمز</span>
+            <span class="code-chip" style="font-size:.8rem; padding:5px 10px;">
+              ${revealed ? ex.code : '••••••'}
+              <button class="icon-btn" onclick="toggleReveal('${ex.code}')" title="${revealed?'إخفاء':'إظهار'}">${revealed?'🙈':'👁️'}</button>
+              <button class="icon-btn" onclick="copyCode('${ex.code}')" title="نسخ">📋</button>
+            </span>
+          </div>
+          <div class="meta-item"><span class="meta-label">الأسئلة</span><span class="meta-value">${ex.questions.length}</span></div>
+          <div class="meta-item"><span class="meta-label">المدة</span><span class="meta-value">${ex.duration} د</span></div>
+          <div class="meta-item" style="grid-column: span 2;">
+            <span class="meta-label">انتهاء صلاحية الرمز</span>
+            <span class="meta-value">${ex.expiresAt ? new Date(ex.expiresAt).toLocaleString('ar-EG') : 'بدون تاريخ انتهاء'}</span>
+          </div>
+        </div>
+        <div class="exam-actions">
+          <button class="link-btn" onclick="toggleExamActive('${ex.code}')">${ex.active?'⏸ إيقاف':'▶ تفعيل'}</button>
+          <button class="link-btn" onclick="deleteExam('${ex.code}')" style="color:var(--bad);">🗑 حذف</button>
+        </div>
+      </div>
+    `;}).join('')}
   `;
 }
 function toggleReveal(code){ revealedCodes[code] = !revealedCodes[code]; renderExamListTab(document.getElementById('adminTabContent')); }
@@ -881,13 +951,61 @@ async function renderStudentsTab(el){
 سارة محمد، الثاني متوسط، ب"></textarea>
       <button class="btn btn-outline" onclick="importBulkStudents()">استيراد إلى القائمة</button>
     </div>
+    <div class="panel" style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+      <div>
+        <h3 class="display" style="border:none; padding-bottom:0; margin-bottom:4px;">📊 جدول بيانات الطلاب</h3>
+        <p style="font-size:.78rem; color:var(--text-dim); margin:0;">جدول مباشر داخل الصفحة (اسم، صف، شعبة) لكل صف على حدة — محفوظ ومتزامن تلقائيًا داخل البرنامج، بدون حاجة لتحميل أي ملف. زر تصدير Excel متاح أيضًا لو احتجت نسخة خارجية.</p>
+      </div>
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <button class="btn btn-outline" style="flex:0; white-space:nowrap;" onclick="toggleGradeDataView()">📋 عرض/إخفاء الجدول</button>
+        <button class="btn btn-primary" style="flex:0; white-space:nowrap;" onclick="exportStudentsExcel()">⬇️ تصدير Excel</button>
+      </div>
+    </div>
+    <div id="gradeDataTables"></div>
     <div id="studentsList"></div>
     <div class="q-list-add" onclick="addStudentRow()">+ إضافة طالب واحد</div>
     <button class="btn btn-primary" onclick="saveStudentsList()">حفظ قائمة الطلاب</button>
     <div id="studentsMsg"></div>
-    <div id="studentsExcelSection" style="margin-top:20px;"></div>
   `;
   renderStudentsList();
+}
+function toggleGradeDataView(){
+  const el = document.getElementById('gradeDataTables');
+  if(el.innerHTML.trim()){ el.innerHTML = ''; return; }
+  el.innerHTML = GRADE_KEYS.map(gk => {
+    const label = GRADE_LABELS[gk];
+    const rows = draftStudents.filter(s => (s.class||'') === label);
+    return `
+      <div class="panel">
+        <h3 class="display">${label} <span style="font-size:.75rem; color:var(--text-dim); font-weight:400;">(${rows.length} طالب)</span></h3>
+        ${rows.length===0 ? `<p style="font-size:.8rem; color:var(--text-dim);">لا يوجد طلاب بهذا الصف بعد.</p>` : `
+          <table style="border:1px solid var(--line);">
+            <thead><tr style="background:rgba(0,0,0,.25);"><th style="border:1px solid var(--line);">الاسم</th><th style="border:1px solid var(--line);">الصف</th><th style="border:1px solid var(--line);">الشعبة</th></tr></thead>
+            <tbody>
+              ${rows.map(s => `<tr><td style="border:1px solid var(--line);">${escapeHtml(s.name)}</td><td style="border:1px solid var(--line);">${escapeHtml(s.class||'')}</td><td style="border:1px solid var(--line);">${escapeHtml(s.section||'')}</td></tr>`).join('')}
+            </tbody>
+          </table>
+        `}
+      </div>
+    `;
+  }).join('');
+}
+function exportStudentsExcel(){
+  if(typeof XLSX === 'undefined'){
+    alert('تعذّر تحميل مكتبة Excel، تأكد من اتصالك بالإنترنت وأعد المحاولة.');
+    return;
+  }
+  const workbook = XLSX.utils.book_new();
+  GRADE_KEYS.forEach(gk => {
+    const label = GRADE_LABELS[gk];
+    const rows = draftStudents
+      .filter(s => (s.class||'') === label)
+      .map(s => ({ 'الاسم': s.name||'', 'الصف': s.class||'', 'الشعبة': s.section||'' }));
+    const sheetData = rows.length ? rows : [{ 'الاسم':'', 'الصف':'', 'الشعبة':'' }];
+    const sheet = XLSX.utils.json_to_sheet(sheetData);
+    XLSX.utils.book_append_sheet(workbook, sheet, label.slice(0,31));
+  });
+  XLSX.writeFile(workbook, 'قوائم_الطلاب.xlsx');
 }
 function importBulkStudents(){
   const raw = document.getElementById('bulkStudentsInput').value;
@@ -910,7 +1028,6 @@ function renderStudentsList(){
   if(!el) return;
   if(draftStudents.length===0){
     el.innerHTML = `<div class="panel"><div class="empty"><div class="icon">🧑‍🎓</div>لا يوجد طلاب مضافون بعد.</div></div>`;
-    renderStudentsExcelTable();
     return;
   }
   el.innerHTML = draftStudents.map((s, idx) => {
@@ -964,9 +1081,9 @@ function renderStudentsList(){
     </div>
   `;}).join('');
   draftStudents.forEach(s => {
-    document.getElementById(`sname_${s.id}`).addEventListener('input', e=>{ s.name = e.target.value; renderStudentsExcelTable(); });
-    document.getElementById(`sclass_${s.id}`).addEventListener('change', e=>{ s.class = e.target.value; renderStudentsExcelTable(); });
-    document.getElementById(`ssection_${s.id}`).addEventListener('input', e=>{ s.section = e.target.value; renderStudentsExcelTable(); });
+    document.getElementById(`sname_${s.id}`).addEventListener('input', e=>{ s.name = e.target.value; });
+    document.getElementById(`sclass_${s.id}`).addEventListener('change', e=>{ s.class = e.target.value; });
+    document.getElementById(`ssection_${s.id}`).addEventListener('input', e=>{ s.section = e.target.value; });
     document.getElementById(`sphone_${s.id}`).addEventListener('input', e=>{ s.parentPhone = e.target.value; });
     const photoInp = document.getElementById(`sphoto_${s.id}`);
     if(photoInp) photoInp.addEventListener('change', async e=>{
@@ -979,77 +1096,11 @@ function renderStudentsList(){
       renderStudentsList();
     });
   });
-  renderStudentsExcelTable();
 }
 function clearStudentPhoto(studentId){
   const s = draftStudents.find(x=>x.id===studentId);
   if(s) s.photo = '';
   renderStudentsList();
-}
-function groupStudentsByClassOrdered(){
-  const groups = {};
-  draftStudents.forEach(s=>{
-    const cls = (s.class && s.class.trim()) ? s.class.trim() : 'بدون صف';
-    if(!groups[cls]) groups[cls] = [];
-    groups[cls].push(s);
-  });
-  const known = GRADE_KEYS.map(gk=>GRADE_LABELS[gk]);
-  const names = Object.keys(groups);
-  const ordered = [...known.filter(n=>names.includes(n)), ...names.filter(n=>!known.includes(n))];
-  return { groups, ordered };
-}
-function renderStudentsExcelTable(){
-  const el = document.getElementById('studentsExcelSection');
-  if(!el) return;
-  const { groups, ordered } = groupStudentsByClassOrdered();
-  if(ordered.length===0){
-    el.innerHTML = `<div class="panel"><div class="empty"><div class="icon">📊</div>جدول Excel سيظهر هنا تلقائيًا بمجرد إضافة طلاب.</div></div>`;
-    return;
-  }
-  el.innerHTML = `
-    <div class="panel">
-      <h3 class="display">📊 جدول بيانات الطلاب (Excel) — ورقة مستقلة لكل صف</h3>
-      <p style="font-size:.78rem; color:var(--text-dim);">يتحدّث هذا الجدول تلقائيًا مع كل طالب تضيفه أو تعدّله، ويحتوي كل صف على: الاسم، الصف، الشعبة. اضغط الزر أدناه لتنزيله كملف Excel حقيقي (xlsx) بحيث تكون كل ورقة داخل الملف لصفٍ دراسي مستقل.</p>
-      ${ordered.map(cls => `
-        <div style="margin-top:14px;">
-          <p style="font-weight:700; color:var(--primary-2); margin-bottom:6px;">🏫 ${escapeHtml(cls)} (${groups[cls].length} طالب)</p>
-          <table>
-            <thead><tr><th>الاسم</th><th>الصف</th><th>الشعبة</th></tr></thead>
-            <tbody>
-              ${groups[cls].map(s=>`<tr><td>${escapeHtml(s.name||'—')}</td><td>${escapeHtml(s.class||'—')}</td><td>${escapeHtml(s.section||'—')}</td></tr>`).join('')}
-            </tbody>
-          </table>
-        </div>
-      `).join('')}
-      <button class="btn btn-primary" style="margin-top:14px;" onclick="downloadStudentsExcel()">⬇️ تنزيل ملف Excel (xlsx)</button>
-      <div id="studentsExcelMsg" style="margin-top:8px;"></div>
-    </div>
-  `;
-}
-function downloadStudentsExcel(){
-  const msgEl = document.getElementById('studentsExcelMsg');
-  if(typeof XLSX === 'undefined'){
-    if(msgEl) msgEl.innerHTML = `<div class="msg msg-error">تعذّر تحميل مكتبة Excel. تأكد من اتصالك بالإنترنت وأعد المحاولة.</div>`;
-    return;
-  }
-  if(!draftStudents || draftStudents.length===0){
-    if(msgEl) msgEl.innerHTML = `<div class="msg msg-error">لا يوجد طلاب لتصديرهم بعد.</div>`;
-    return;
-  }
-  const { groups, ordered } = groupStudentsByClassOrdered();
-  const wb = XLSX.utils.book_new();
-  ordered.forEach(cls=>{
-    const rows = [['الاسم','الصف','الشعبة']];
-    groups[cls].forEach(s=> rows.push([s.name||'', s.class||'', s.section||'']));
-    const ws = XLSX.utils.aoa_to_sheet(rows);
-    ws['!cols'] = [{wch:24},{wch:18},{wch:10}];
-    let sheetName = cls.replace(/[\[\]\*\/\\\?:]/g,'').slice(0,31) || 'صف';
-    let base = sheetName, i=2;
-    while(wb.SheetNames.includes(sheetName)){ sheetName = (base + '_' + i).slice(0,28); i++; }
-    XLSX.utils.book_append_sheet(wb, ws, sheetName);
-  });
-  XLSX.writeFile(wb, `بيانات_الطلاب_${new Date().toISOString().slice(0,10)}.xlsx`);
-  if(msgEl) msgEl.innerHTML = `<div class="msg msg-success">تم تنزيل ملف Excel بنجاح (${wb.SheetNames.length} ورقة/صف).</div>`;
 }
 async function getStudentExamResults(s){
   const subs = await loadSubs();
@@ -1942,20 +1993,28 @@ function toggleMgDetail(i){
 }
 
 /* ============================= INIT ============================= */
-(async function init(){
-  const healthy = await checkStorageHealth();
-  if(!healthy){
-    document.body.insertAdjacentHTML('afterbegin', `
-      <div style="background:#a13d3d; color:#fff; text-align:center; padding:10px 16px; font-size:.8rem; font-weight:700; position:relative; z-index:100;">
-        ⚠️ تعذّر الوصول إلى نظام الحفظ الدائم في هذه الجلسة. إذا كنت قد نزّلت هذا الملف وفتحته مباشرة في المتصفح (وليس من داخل محادثة Claude أو رابط النشر)، فلن تُحفظ أي بيانات — الامتحانات والنتائج تحتاج لفتح الملف من داخل بيئة Claude (كمصنع/Artifact) ليعمل الحفظ بشكل صحيح.
-      </div>
-    `);
-  }
+render();
+(async function backgroundInit(){
   const theme = await loadTheme();
   applyTheme(theme);
   telegramLink = await loadTelegramLink();
   updateHeaderTelegramButton();
-  render();
+  const health = await checkStorageHealth();
+  if(!health.ok){
+    const backendLabel = health.backend === 'firebase' ? 'Firebase' : 'نظام Claude الأصلي';
+    document.body.insertAdjacentHTML('afterbegin', `
+      <div style="background:#a13d3d; color:#fff; text-align:center; padding:10px 16px; font-size:.8rem; font-weight:700; position:relative; z-index:100;">
+        ⚠️ تعذّر الحفظ باستخدام: ${backendLabel}
+        <div style="font-weight:400; font-size:.72rem; margin-top:4px; direction:ltr; word-break:break-word;">${(health.error||'').replace(/</g,'&lt;')}${window.__firebaseError ? ' | firebase-init-error: ' + window.__firebaseError.replace(/</g,'&lt;') : ''}</div>
+      </div>
+    `);
+  }else if(health.backend === 'firebase'){
+    document.body.insertAdjacentHTML('afterbegin', `
+      <div style="background:#3f6b4a; color:#fff; text-align:center; padding:6px 16px; font-size:.72rem; font-weight:700;">
+        ✅ متصل بقاعدة بيانات Firebase بنجاح
+      </div>
+    `);
+  }
 })();
 </script>
 </body>
