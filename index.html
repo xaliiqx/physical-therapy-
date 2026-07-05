@@ -641,15 +641,21 @@ function newDraftExam(){ draftExam = { code:'', expiresAt:'', title:'', duration
 
 async function renderAdminDash(){
   if(!draftExam) newDraftExam();
+  const health = window.__lastHealthCheck || await checkStorageHealth();
+  window.__lastHealthCheck = health;
+  const healthBannerHTML = health.ok
+    ? `<div style="background:rgba(74,222,128,.12); border:1px solid rgba(74,222,128,.35); color:var(--good); padding:8px 14px; border-radius:8px; font-size:.75rem; font-weight:700; margin-bottom:14px; text-align:center;">✅ متصل بنظام الحفظ (${health.backend === 'firebase' ? 'Firebase' : 'نظام Claude الأصلي'}) بنجاح</div>`
+    : `<div style="background:rgba(248,113,113,.12); border:1px solid rgba(248,113,113,.35); color:var(--bad); padding:10px 14px; border-radius:8px; font-size:.78rem; font-weight:700; margin-bottom:14px; text-align:center;">⚠️ تعذّر الحفظ (${health.backend === 'firebase' ? 'Firebase' : 'نظام Claude الأصلي'})<div style="font-weight:400; font-size:.7rem; margin-top:4px; direction:ltr; word-break:break-word;">${(health.error||'').replace(/</g,'&lt;')}</div></div>`;
   appEl.innerHTML = `
     <button class="back-btn" onclick="adminLogout()">→ تسجيل الخروج</button>
+    ${healthBannerHTML}
     <div class="tabs">
       <div class="tab ${adminTab==='create'?'active':''}" onclick="switchAdminTab('create')">إنشاء امتحان</div>
       <div class="tab ${adminTab==='list'?'active':''}" onclick="switchAdminTab('list')">الامتحانات</div>
       <div class="tab ${adminTab==='students'?'active':''}" onclick="switchAdminTab('students')">الطلاب</div>
       <div class="tab ${adminTab==='results'?'active':''}" onclick="switchAdminTab('results')">النتائج</div>
       <div class="tab ${adminTab==='grades'?'active':''}" onclick="switchAdminTab('grades')">الصفوف الدراسية</div>
-      <div class="tab ${adminTab==='colors'?'active':''}" onclick="switchAdminTab('colors')">الألوان</div>
+      <div class="tab ${adminTab==='colors'?'active':''}" onclick="switchAdminTab('colors')">ألوان الخلفية</div>
       <div class="tab ${adminTab==='settings'?'active':''}" onclick="switchAdminTab('settings')">الإعدادات</div>
     </div>
     <div id="adminTabContent"></div>
@@ -1999,22 +2005,7 @@ render();
   applyTheme(theme);
   telegramLink = await loadTelegramLink();
   updateHeaderTelegramButton();
-  const health = await checkStorageHealth();
-  if(!health.ok){
-    const backendLabel = health.backend === 'firebase' ? 'Firebase' : 'نظام Claude الأصلي';
-    document.body.insertAdjacentHTML('afterbegin', `
-      <div style="background:#a13d3d; color:#fff; text-align:center; padding:10px 16px; font-size:.8rem; font-weight:700; position:relative; z-index:100;">
-        ⚠️ تعذّر الحفظ باستخدام: ${backendLabel}
-        <div style="font-weight:400; font-size:.72rem; margin-top:4px; direction:ltr; word-break:break-word;">${(health.error||'').replace(/</g,'&lt;')}${window.__firebaseError ? ' | firebase-init-error: ' + window.__firebaseError.replace(/</g,'&lt;') : ''}</div>
-      </div>
-    `);
-  }else if(health.backend === 'firebase'){
-    document.body.insertAdjacentHTML('afterbegin', `
-      <div style="background:#3f6b4a; color:#fff; text-align:center; padding:6px 16px; font-size:.72rem; font-weight:700;">
-        ✅ متصل بقاعدة بيانات Firebase بنجاح
-      </div>
-    `);
-  }
+  window.__lastHealthCheck = await checkStorageHealth();
 })();
 </script>
 </body>
